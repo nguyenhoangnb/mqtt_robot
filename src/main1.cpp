@@ -1,9 +1,13 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
-
+#include <AccelStepper.h>
+#include<ArduinoJson.h>
 // Cấu hình WiFi
 const char* ssid = "NQT";           // WiFi SSID
 const char* password = "11345678";  // WiFi Password
+// Cấu hình chân cảm biến siêu âm
+#define TRIG_PIN 9  
+#define ECHO_PIN 10 
 
 // Cấu hình MQTT
 const char* mqtt_server = "192.168.1.114"; // MQTT Broker IP
@@ -16,7 +20,15 @@ const char* mqttTopic = "commands";       // Topic nhận lệnh
 #define led3 17
 
 // Thời gian mặc định
-const int interval = 10000; // Thời gian bật/tắt LED trong chế độ tự động (10 giây)
+const int interval = 10000; // Thời gian  trong chế độ tự động (10 giây)
+
+#define HALFSTEP 4
+// Cài đặt động cơ step
+AccelStepper stepper1(HALFSTEP, 8, 10, 9, 11);
+AccelStepper stepper2(HALFSTEP, 4, 6, 5, 7);
+float wheelBase = 0.11;
+enum MotorState { STOP, TURN_LEFT, TURN_RIGHT, FORWARD, BACKWARD };
+MotorState currentState = STOP;
 
 // MQTT và WiFi clients
 WiFiClient espClient;
@@ -119,143 +131,34 @@ public:
 };
 
 CommandStack commandStack;
-
-// Callback nhận lệnh từ MQTT
-void callback(char* topic, byte* payload, unsigned int length) {
-    Serial.print("Nhận lệnh từ [");
-    Serial.print(topic);
-    Serial.print("]: ");
-
-    for (int i = 0; i < length; i++) {
-        Serial.print((char)payload[i]);
-    }
-    Serial.println();
-
-    if (length > 0 && payload != nullptr) {
-        char receivedCommand = (char)payload[0];
-        topic_status = true;
-        if (receivedCommand >= 'A' && receivedCommand <= 'D') { // Kiểm tra lệnh hợp lệ
-            commandStack.push(receivedCommand, getValueByKey(Timer_control,receivedCommand), 'C');
-        } else {
-            Serial.println("Lệnh không hợp lệ.");
-        }
-    }
-}
-
-// Thực thi lệnh
-void executeCommand(char cmd, unsigned int time ,char control) {
-    switch (cmd) {
-        case 'A': {
-            Serial.println("Lệnh A: Bật LED1 trong 10 giây.");
-            topic_status = false;
-            digitalWrite(led1, HIGH);
-            unsigned long startMillis = millis();
-            while (millis() - startMillis < time && !topic_status) {
-                client.loop(); // Duy trì kết nối MQTT
-            }
-            if (topic_status && control == 'A'){
-                unsigned int time_break = millis() - startMillis;
-                commandStack.push(cmd, time_break, control);
-            }
-            digitalWrite(led1, LOW);
-            break;
-        }
-        case 'B': {
-            Serial.println("Lệnh B: Bật LED2 vĩnh viễn cho đến khi có lệnh khác.");
-            topic_status = false;
-            digitalWrite(led2, HIGH);
-            unsigned long startMillis = millis();
-            while (millis() - startMillis < time && !topic_status){
-                client.loop(); // Duy trì kết nối MQTT
-            }
-            if (topic_status && control == 'A'){
-                unsigned int time_break = millis() - startMillis;
-                commandStack.push(cmd, time_break , control);
-            }
-            digitalWrite(led2, LOW);
-            break;
-        }
-        case 'C': {
-            Serial.println("Lệnh C: Nhấp nháy LED1 5 lần.");
-            unsigned long startMillis = millis();
-            while (millis() - startMillis < time && !topic_status){
-                client.loop(); // Duy trì kết nối MQTT
-                for (int i = 0; i < 5; i++) {
-                    digitalWrite(led1, HIGH);
-                    delay(500);
-                    digitalWrite(led1, LOW);
-                    delay(500);
-                }
-            }
-            if (topic_status && control == 'A'){
-                unsigned int time_break = millis() - startMillis;
-                commandStack.push(cmd, time_break , control);
-            }
-            
-            break;
-        }
-        case 'D': {
-            Serial.println("Lệnh D: Tắt LED1.");
-            unsigned long startMillis = millis();
-            digitalWrite(led1, LOW);
-            while (millis() - startMillis < time && !topic_status){
-                client.loop(); // Duy trì kết nối MQTT
-            }
-            if (topic_status && control == 'A'){
-                unsigned int time_break = millis() - startMillis;
-                commandStack.push(cmd, time_break , control);
-            }
-            break;
-        }
-        default: {
-            Serial.println("Lệnh không xác định.");
-            break;
-        }
-    }
-}
-
-// Kết nối lại MQTT Broker
-void reconnect() {
-    while (!client.connected()) {
-        Serial.print("Đang kết nối lại MQTT...");
-        if (client.connect("ESP32Client")) {
-            Serial.println("Kết nối MQTT thành công.");
-            client.subscribe(mqttTopic);
-        } else {
-            Serial.print("Thất bại, rc=");
-            Serial.print(client.state());
-            Serial.println(" Thử lại sau 5 giây.");
-            delay(5000);
-        }
-    }
-}
-
-// Chế độ tự động
-void automatic() {
-    Serial.println("Chuyển sang chế độ tự động...");
-    while (!topic_status){
-        int index = random(0, 4);
-        commandStack.push(Timer_control[index].command_control, Timer_control[index].time_control, 'A');
-        char cmd = Timer_control[index].command_control;
-        client.loop();
-        unsigned int t_ = commandStack.get_time();
-       // Serial.println(Timer_control[index])
-       commandStack.pop();
-        executeCommand(cmd,t_ ,'A');
-    }
-    
-    Serial.println("Thoát chế độ tự động do có lệnh MQTT.");
-}
+float getDistance();
+void run();
+void stopMotors();
+void turnLeft(int speed = 1000);
+void turnRight(int speed = 1000);
+void moveForward(int speed = 1000);
+void moveBackward(int speed = 1000);
+void callback(char* topic, byte* payload, unsigned int length );
+void reconnect();
+void automatic();
+void executeCommand(char cmd, unsigned int time ,char control );
 
 void setup() {
     Serial.begin(115200);
 
-    pinMode(led1, OUTPUT);
-    pinMode(led2, OUTPUT);
-    pinMode(led3, OUTPUT);
-    digitalWrite(led1, LOW);
-    digitalWrite(led2, LOW);
-    digitalWrite(led3, LOW);
+    // pinMode(led1, OUTPUT);
+    // pinMode(led2, OUTPUT);
+    // pinMode(led3, OUTPUT);
+    // digitalWrite(led1, LOW);
+    // digitalWrite(led2, LOW);
+    // digitalWrite(led3, LOW);
+    // set up động cơ
+    stepper1.setMaxSpeed(1000.0);
+    stepper1.setAcceleration(50.0);
+
+    stepper2.setMaxSpeed(1000.0);
+    stepper2.setAcceleration(50.0);
+    stopMotors();
 
     Serial.print("Kết nối WiFi...");
     WiFi.begin(ssid, password);
@@ -291,3 +194,227 @@ void loop() {
         
     // }
 }
+
+
+// Generate function
+float getDistance() {
+    // Trigger the sensor
+    digitalWrite(TRIG_PIN, LOW);
+    delayMicroseconds(2);
+    digitalWrite(TRIG_PIN, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(TRIG_PIN, LOW);
+
+    // Measure the duration of the echo pulse
+    long duration = pulseIn(ECHO_PIN, HIGH);
+
+    // Calculate distance
+    // Speed of sound = 343 meters/second = 0.0343 cm/μs
+    float distance = (duration * 0.0343) / 2;
+
+    return distance; // Return the calculated distance
+}
+
+void run(){
+    stepper1.run();
+    stepper2.run();
+}
+
+void stopMotors() {
+    stepper1.stop();
+    stepper2.stop();
+    Serial.println("Motors stopped.");
+    run();
+}
+
+void turnLeft(int speed ) {
+    stepper1.setSpeed(speed);
+    stepper2.setSpeed(-speed);
+    run();
+    Serial.println("Turning left.");
+}
+
+void turnRight(int speed ) {
+    stepper1.setSpeed(-speed);
+    stepper2.setSpeed(speed);
+    run();
+    Serial.println("Turning right.");
+}
+
+void moveForward(int speed ) {
+    stepper1.setSpeed(speed);
+    stepper2.setSpeed(speed);
+    run();
+    Serial.println("Moving forward.");
+}
+
+void moveBackward(int speed ) {
+    stepper1.setSpeed(-speed);
+    stepper2.setSpeed(-speed);
+    run();
+    Serial.println("Moving backward.");
+}
+
+// Callback nhận lệnh từ MQTT
+void callback(char* topic, byte* payload, unsigned int length) {
+    Serial.print("Nhận lệnh từ [");
+    Serial.print(topic);
+    Serial.print("]: ");
+
+    for (int i = 0; i < length; i++) {
+        Serial.print((char)payload[i]);
+    }
+    Serial.println();
+
+    if (length > 0 && payload != nullptr) {
+        char receivedCommand = (char)payload[0];
+        topic_status = true;
+        if (receivedCommand >= 'A' && receivedCommand <= 'D') { // Kiểm tra lệnh hợp lệ
+            commandStack.push(receivedCommand, getValueByKey(Timer_control,receivedCommand), 'C');
+        } else {
+            Serial.println("Lệnh không hợp lệ.");
+        }
+    }
+}
+
+// Thực thi lệnh
+void executeCommand(char cmd, unsigned int time ,char control) {
+    switch (cmd) {
+        case 'A': {
+            Serial.println("Command A: Go ahead");
+            topic_status = false;
+            // digitalWrite(led1, HIGH);
+            moveForward();
+            unsigned long startMillis = millis();
+            while (millis() - startMillis < time && !topic_status) {
+                client.loop(); // Duy trì kết nối MQTT
+            }
+            if (topic_status && control == 'A'){
+                unsigned int time_break = millis() - startMillis;
+                commandStack.push(cmd, time_break, control);
+            }
+            digitalWrite(led1, LOW);
+            break;
+        }
+        case 'B': {
+            Serial.println("Command B: Go Behind.");
+            topic_status = false;
+            digitalWrite(led2, HIGH);
+            moveBackward();
+            unsigned long startMillis = millis();
+            while (millis() - startMillis < time && !topic_status){
+                client.loop(); // Duy trì kết nối MQTT
+            }
+            if (topic_status && control == 'A'){
+                unsigned int time_break = millis() - startMillis;
+                commandStack.push(cmd, time_break , control);
+            }
+            digitalWrite(led2, LOW);
+            break;
+        }
+        case 'L': {
+            Serial.println("Command L: Turn Left.");
+            unsigned long startMillis = millis();
+            turnLeft();
+            while (millis() - startMillis < time && !topic_status){
+                client.loop(); // Duy trì kết nối MQTT
+                for (int i = 0; i < 5; i++) {
+                    digitalWrite(led1, HIGH);
+                    delay(500);
+                    digitalWrite(led1, LOW);
+                    delay(500);
+                }
+            }
+            if (topic_status && control == 'A'){
+                unsigned int time_break = millis() - startMillis;
+                commandStack.push(cmd, time_break , control);
+            }
+            
+            break;
+        }
+        case 'R': {
+            Serial.println("Command R: Turn Right.");
+            unsigned long startMillis = millis();
+            // digitalWrite(led1, LOW);
+            turnRight();
+            while (millis() - startMillis < time && !topic_status){
+                client.loop(); // Duy trì kết nối MQTT
+            }
+            if (topic_status && control == 'A'){
+                unsigned int time_break = millis() - startMillis;
+                commandStack.push(cmd, time_break , control);
+            }
+            break;
+        }
+        case 'S': {
+            Serial.println("Command S: Stop.");
+            unsigned long startMillis = millis();
+            // digitalWrite(led1, LOW);
+            stopMotors();
+            while (millis() - startMillis < time && !topic_status){
+                client.loop(); // Duy trì kết nối MQTT
+            }
+            if (topic_status && control == 'A'){
+                unsigned int time_break = millis() - startMillis;
+                commandStack.push(cmd, time_break , control);
+            }
+            break;
+        }
+
+        case 'C': {
+            Serial.println("Command C: Turn Right.");
+            unsigned long startMillis = millis();
+            digitalWrite(led1, LOW);
+            while (millis() - startMillis < time && !topic_status){
+                client.loop(); // Duy trì kết nối MQTT
+            }
+            if (topic_status && control == 'A'){
+                unsigned int time_break = millis() - startMillis;
+                commandStack.push(cmd, time_break , control);
+            }
+            break;
+        }
+
+        default: {
+            Serial.println("Lệnh không xác định.");
+            break;
+        }
+    }
+}
+
+// Kết nối lại MQTT Broker
+void reconnect() {
+    while (!client.connected()) {
+        Serial.print("Đang kết nối lại MQTT...");
+        if (client.connect("ESP32Client")) {
+            Serial.println("Kết nối MQTT thành công.");
+            client.subscribe(mqttTopic);
+        } else {
+            Serial.print("Thất bại, rc=");
+            Serial.print(client.state());
+            Serial.println(" Thử lại sau 5 giây.");
+            delay(5000);
+        }
+    }
+}
+
+
+
+
+// Chế độ tự động
+void automatic() {
+    Serial.println("Chuyển sang chế độ tự động...");
+    while (!topic_status){
+        int index = random(0, 4);
+        commandStack.push(Timer_control[index].command_control, Timer_control[index].time_control, 'A');
+        char cmd = Timer_control[index].command_control;
+        client.loop();
+        unsigned int t_ = commandStack.get_time();
+       // Serial.println(Timer_control[index])
+       commandStack.pop();
+        executeCommand(cmd,t_ ,'A');
+    }
+    
+    Serial.println("Thoát chế độ tự động do có lệnh MQTT.");
+}
+
