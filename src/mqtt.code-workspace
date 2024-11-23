@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": ".."
+		},
+		{
+			"name": "mobie_robot",
+			"path": "../../../mobie_robot"
+		}
+	],
+	"settings": {}
+}
