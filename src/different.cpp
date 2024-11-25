@@ -1,57 +1,48 @@
-// Motor pins
-const int leftMotorForward = 9;
-const int leftMotorBackward = 10;
-const int rightMotorForward = 11;
-const int rightMotorBackward = 12;
+#include <AccelStepper.h>  // Include the AccelStepper library for controlling stepper motors
+
+// Motor pins for ULN2003 (for controlling a 28BYJ-48 stepper motor)
+const int leftMotorPin1 = 8;
+const int leftMotorPin2 = 9;
+const int leftMotorPin3 = 10;
+const int leftMotorPin4 = 11;
+
+const int rightMotorPin1 = 4;
+const int rightMotorPin2 = 5;
+const int rightMotorPin3 = 6;
+const int rightMotorPin4 = 7;
 
 // Ultrasonic sensor pins
-const int trigPin = 7;
-const int echoPin = 6;
+const int trigPin = 12;
+const int echoPin = 13;
 
-// Constants
-const float wheelRadius = 0.4; // meters
-const float wheelBase = 0.825; // meters (distance between the wheels)
-const float pi = 3.14159265359;
+// Stepper motor speed and acceleration
+const int motorSpeed = 1000;  // Maximum speed for stepper motors (steps per second)
+const int motorAccel = 500;   // Acceleration for stepper motors (steps per second squared)
 
-// Variables
-float X[3] = {0.0, 0.0, 0.0}; // [x, y, theta] robot state
-float Q[2] = {0.0, 0.0}; // [left wheel, right wheel] joint positions
+// Distance thresholds
+const float stopDistance = 20.0; // Minimum distance to stop (in cm)
+const float backDistance = 15.0; // Distance to reverse when too close (in cm)
 
-// Control variables
-float targetDistance = 30.0; // Distance to detect obstacles (in cm)
-float stopDistance = 20.0; // Minimum distance to stop (in cm)
-float backDistance = 15.0; // Distance to reverse when too close (in cm)
-float moveSpeed = 255; // Speed of moving forward or backward
-float turnSpeed = 150; // Speed of turning (adjust for faster/slower turns)
+// Create stepper motor objects for left and right motors
+AccelStepper leftMotor(AccelStepper::FULL4WIRE, leftMotorPin1, leftMotorPin2, leftMotorPin3, leftMotorPin4);
+AccelStepper rightMotor(AccelStepper::FULL4WIRE, rightMotorPin1, rightMotorPin2, rightMotorPin3, rightMotorPin4);
 
-// Function to update the motor speeds
-void setMotorSpeeds(float leftSpeed, float rightSpeed) {
-    // Convert the speeds to PWM values (simple proportional control)
-    int leftPWM = constrain(abs(leftSpeed) * 255, 0, 255);
-    int rightPWM = constrain(abs(rightSpeed) * 255, 0, 255);
-    
-    // Apply direction based on speed sign
-    if (leftSpeed >= 0) {
-        analogWrite(leftMotorForward, leftPWM);
-        analogWrite(leftMotorBackward, 0);
-    } else {
-        analogWrite(leftMotorForward, 0);
-        analogWrite(leftMotorBackward, leftPWM);
-    }
+// Function to set motor speeds (both forward and backward)
+void setMotorSpeeds(int leftSpeed, int rightSpeed) {
+    leftMotor.setMaxSpeed(motorSpeed);
+    rightMotor.setMaxSpeed(motorSpeed);
+    leftMotor.setAcceleration(motorAccel);
+    rightMotor.setAcceleration(motorAccel);
 
-    if (rightSpeed >= 0) {
-        analogWrite(rightMotorForward, rightPWM);
-        analogWrite(rightMotorBackward, 0);
-    } else {
-        analogWrite(rightMotorForward, 0);
-        analogWrite(rightMotorBackward, rightPWM);
-    }
+    leftMotor.moveTo(leftSpeed);
+    rightMotor.moveTo(rightSpeed);
 }
 
 // Function to measure the distance from the ultrasonic sensor
 float getUltrasonicDistance() {
-    long duration, distance;
-  
+    long duration;
+    long distance;
+
     // Send pulse to trigger pin
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
@@ -64,32 +55,31 @@ float getUltrasonicDistance() {
 
     // Calculate the distance (in cm)
     distance = duration * 0.0343 / 2; // Speed of sound = 343 m/s (0.0343 cm/µs)
-    
+
     return distance;
 }
 
 // Function to make the robot turn (left or right)
 void turnRobot(int direction) {
-    // Rotate the robot by setting the left and right motor speeds with opposite directions
-    if (direction == 1) { // Turn right
-        setMotorSpeeds(turnSpeed, -turnSpeed); // Right motor forward, left motor backward
-    } else if (direction == -1) { // Turn left
-        setMotorSpeeds(-turnSpeed, turnSpeed); // Left motor forward, right motor backward
+    if (direction == 1) {  // Turn right
+        setMotorSpeeds(100, -100);  // Right motor forward, left motor backward
+    } else if (direction == -1) {  // Turn left
+        setMotorSpeeds(-100, 100);  // Left motor forward, right motor backward
     }
-    delay(500); // Turn for 0.5 seconds (adjust for the degree of rotation)
-    setMotorSpeeds(0, 0); // Stop the robot after turning
+    delay(500);  // Turn for 0.5 seconds (adjust for the degree of rotation)
+    setMotorSpeeds(0, 0);  // Stop after turning
 }
 
 // Function to move the robot backward
 void moveBackward() {
-    setMotorSpeeds(-moveSpeed, -moveSpeed); // Move both wheels backward at full speed
-    delay(500); // Move backward for 0.5 seconds (adjust for the distance)
-    setMotorSpeeds(0, 0); // Stop after reversing
+    setMotorSpeeds(-200, -200);  // Move both wheels backward at full speed
+    delay(500);  // Move backward for 0.5 seconds (adjust for the distance)
+    setMotorSpeeds(0, 0);  // Stop after reversing
 }
 
 // Function to move the robot forward
 void moveForward() {
-    setMotorSpeeds(moveSpeed, moveSpeed); // Move both wheels forward at full speed
+    setMotorSpeeds(200, 200);  // Move both wheels forward at full speed
 }
 
 // Function to check for obstacles and navigate
@@ -116,9 +106,7 @@ void navigate() {
         moveForward();
     } else if (distanceToObject < backDistance) {
         // If too close, move backward
-        setMotorSpeeds(-moveSpeed, -moveSpeed); // Reverse with full speed
-        delay(500); // Reverse for 0.5 seconds (adjust for distance)
-        setMotorSpeeds(0, 0); // Stop after reversing
+        moveBackward();
     } else {
         // If no obstacle, continue moving forward
         moveForward();
@@ -127,10 +115,15 @@ void navigate() {
 
 void setup() {
     // Set motor pins as output
-    pinMode(leftMotorForward, OUTPUT);
-    pinMode(leftMotorBackward, OUTPUT);
-    pinMode(rightMotorForward, OUTPUT);
-    pinMode(rightMotorBackward, OUTPUT);
+    pinMode(leftMotorPin1, OUTPUT);
+    pinMode(leftMotorPin2, OUTPUT);
+    pinMode(leftMotorPin3, OUTPUT);
+    pinMode(leftMotorPin4, OUTPUT);
+
+    pinMode(rightMotorPin1, OUTPUT);
+    pinMode(rightMotorPin2, OUTPUT);
+    pinMode(rightMotorPin3, OUTPUT);
+    pinMode(rightMotorPin4, OUTPUT);
 
     // Set ultrasonic sensor pins
     pinMode(trigPin, OUTPUT);
@@ -141,5 +134,5 @@ void setup() {
 }
 
 void loop() {
-    navigate(); // Call the navigation function to check and move the robot
+    navigate();  // Call the navigation function to check and move the robot
 }
